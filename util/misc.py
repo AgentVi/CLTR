@@ -290,7 +290,7 @@ def _max_by_axis(the_list):
 
 
 class NestedTensor(object):
-    def __init__(self, tensors, mask: Optional[Tensor]):
+    def __init__(self, tensors: Tensor, mask: Tensor):
         self.tensors = tensors
         self.mask = mask
 
@@ -312,34 +312,26 @@ class NestedTensor(object):
         return str(self.tensors)
 
 
-def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
-    # TODO make this more general
-    if tensor_list[0].ndim == 3:
-        if torchvision._is_tracing():
-            # nested_tensor_from_tensor_list() does not export well to ONNX
-            # call _onnx_nested_tensor_from_tensor_list() instead
-            return _onnx_nested_tensor_from_tensor_list(tensor_list)
-
-        # TODO make it support different-sized images
-        max_size = _max_by_axis([list(img.shape) for img in tensor_list])
-        # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
-        batch_shape = [len(tensor_list)] + max_size
-        b, c, h, w = batch_shape
-        dtype = tensor_list[0].dtype
-        device = tensor_list[0].device
-        tensor = torch.zeros(batch_shape, dtype=dtype, device=device)
-        mask = torch.ones((b, h, w), dtype=torch.bool, device=device)
-        for img, pad_img, m in zip(tensor_list, tensor, mask):
-            pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
-            m[: img.shape[1], :img.shape[2]] = False
-    else:
-        raise ValueError('not supported')
-    return NestedTensor(tensor, mask)
+def nested_tensor_from_tensor_list(tensor_list: Tensor) -> NestedTensor:
+    
+    max_size = _max_by_axis([list(img.shape) for img in tensor_list])
+    # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
+    batch_shape = [len(tensor_list)] + max_size
+    b, c, h, w = batch_shape
+    dtype = tensor_list[0].dtype
+    device = tensor_list[0].device
+    tensor: torch.Tensor = torch.zeros(batch_shape, dtype=dtype, device=device)
+    mask: torch.Tensor = torch.ones((b, h, w), dtype=torch.bool, device=device)
+    for img, pad_img, m in zip(tensor_list, tensor, mask):
+        pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
+        m[: img.shape[1], :img.shape[2]] = False
+    
+    return NestedTensor(tensors=tensor, mask=mask)
 
 
 # _onnx_nested_tensor_from_tensor_list() is an implementation of
 # nested_tensor_from_tensor_list() that is supported by ONNX tracing.
-@torch.jit.unused
+#@torch.jit.unused
 def _onnx_nested_tensor_from_tensor_list(tensor_list: List[Tensor]) -> NestedTensor:
     max_size = []
     for i in range(tensor_list[0].dim()):
@@ -503,7 +495,7 @@ def interpolate(input, size=None, scale_factor=None, mode="nearest", align_corne
         return torchvision.ops.misc.interpolate(input, size, scale_factor, mode, align_corners)
 
 
-def inverse_sigmoid(x, eps=1e-5):
+def inverse_sigmoid(x, eps=torch.tensor(1e-5).cuda()):
     x = x.clamp(min=0, max=1)
     x1 = x.clamp(min=eps)
     x2 = (1 - x).clamp(min=eps)

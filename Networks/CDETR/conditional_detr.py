@@ -25,7 +25,7 @@ from .matcher import build_matcher
 from .segmentation import (DETRsegm, PostProcessPanoptic, PostProcessSegm,
                            dice_loss, sigmoid_focal_loss)
 from .transformer import build_transformer
-
+import torch_tensorrt
 
 class ConditionalDETR(nn.Module):
     """ This is the Conditional DETR module that performs object detection """
@@ -50,7 +50,7 @@ class ConditionalDETR(nn.Module):
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
         self.aux_loss = aux_loss
-
+        
         # init prior_prob setting for focal loss
         prior_prob = 0.01
         bias_value = -math.log((1 - prior_prob) / prior_prob)
@@ -60,7 +60,7 @@ class ConditionalDETR(nn.Module):
         nn.init.constant_(self.point_embed.layers[-1].weight.data, 0)
         nn.init.constant_(self.point_embed.layers[-1].bias.data, 0)
 
-    def forward(self, samples: NestedTensor):
+    def forward(self, samples):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -75,14 +75,19 @@ class ConditionalDETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
-        if isinstance(samples, (list, torch.Tensor)):
-            samples = nested_tensor_from_tensor_list(samples)
-        features, pos = self.backbone(samples)
-
-        src, mask = features[-1].decompose()
+         
+        #if isinstance(samples, (list, torch.Tensor)):
+        #    nested_samples = nested_tensor_from_tensor_list(samples)
+        #mask = nested_samples.mask
+        #ts = nested_samples.tensors
+        ts = samples
+        b, c, h, w = ts.shape
+        mask = torch.zeros((b, h, w), dtype=torch.bool).cuda()
+        src, mask, pos = self.backbone(ts, mask)
+        
         assert mask is not None
-        hs, reference = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])
-
+        hs, reference = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos)
+        
         reference_before_sigmoid = inverse_sigmoid(reference)
         outputs_coords = []
         for lvl in range(hs.shape[0]):
@@ -93,12 +98,13 @@ class ConditionalDETR(nn.Module):
         outputs_coord = torch.stack(outputs_coords)
 
         outputs_class = self.class_embed(hs)
-        out = {'pred_logits': outputs_class[-1], 'pred_points': outputs_coord[-1]}
-        if self.aux_loss:
-            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+        out = outputs_class[-1], outputs_coord[-1]
+        #if self.aux_loss:
+        #    out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+        
         return out
 
-    @torch.jit.unused
+    #@torch.jit.unused
     def _set_aux_loss(self, outputs_class, outputs_coord):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such

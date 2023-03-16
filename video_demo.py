@@ -15,7 +15,11 @@ import numpy as np
 import cv2
 import torch.nn as nn
 from Networks.CDETR import build_model
+import torch.onnx
+import onnx
+import torch_tensorrt
 
+from datetime import datetime
 img_transform = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 tensor_transform = transforms.ToTensor()
 
@@ -23,40 +27,90 @@ warnings.filterwarnings('ignore')
 '''fixed random seed '''
 setup_seed(args.seed)
 
+def change_input_dim(model):
+    # Use some symbolic name not used for any other dimension
+    sym_batch_dim = "N"
+    # or an actal value
+    actual_batch_dim = 4 
 
+    # The following code changes the first dimension of every input to be batch-dim
+    # Modify as appropriate ... note that this requires all inputs to
+    # have the same batch_dim 
+    inputs = model.graph.input
+    for input in inputs:
+        # Checks omitted.This assumes that all inputs are tensors and have a shape with first dim.
+        # Add checks as needed.
+        dim1 = input.type.tensor_type.shape.dim[0]
+        # update dim to be a symbolic value
+        dim1.dim_param = sym_batch_dim
+        # or update it to be an actual value:
+        # dim1.dim_value = actual_batch_dim
+
+
+def apply(transform, infile, outfile):
+    model = onnx.load(infile)
+    transform(model)
+    onnx.save(model, outfile)
+
+      
 def main(args):
 
     utils.init_distributed_mode(return_args)
     model, criterion, postprocessors = build_model(return_args)
     model = model.cuda()
+        
+    #torch_tensorrt.logging.set_reportable_log_level(torch_tensorrt.logging.Level.Debug)
+    #trt_model = torch_tensorrt.compile(model,
+    #    inputs=[torch.randn((12, 3, 256, 256))],
+    #    enabled_precisions= { torch.half} # Run with FP32
+    #)
+    #trt_model = torch_tensorrt.compile(model,
+    #inputs=[torch_tensorrt.Input((12, 3, 256, 256))],
+    #    enabled_precisions= { torch.half} # Run with FP32
+    #)
 
-    model = nn.DataParallel(model, device_ids=[0])
+    # Save the model
+    #torch.jit.save(trt_model, "cltr.pt")
+
+    #model = nn.DataParallel(model, device_ids=[0])
 
     if args['pre']:
         if os.path.isfile(args['pre']):
-            checkpoint = torch.load(args['pre'])['state_dict']
+            
+            #for layer_id in range(model.transformer.decoder.num_layers - 1):
+            #    model.transformer.decoder.layers[layer_id + 1].ca_qpos_proj = None
+            
+            checkpoint = torch.load(args['pre'], map_location='cuda')['state_dict']
             new_state_dict = OrderedDict()
             for k, v in checkpoint.items():
                # if 'backbone' in k or 'transformer' in k:
                 name = k.replace('bbox', 'point') # remove `module.`，表面从第7个key值字符取到最后一个字符，正好去掉了module.
+                name = name.replace('module.', '')
                 new_state_dict[name] = v
 
             print("=> loading checkpoint '{}'".format(args['pre']))
-            checkpoint = torch.load(args['pre'])
+            checkpoint = torch.load(args['pre'], map_location='cuda')
             model.load_state_dict(new_state_dict)
+
             args['start_epoch'] = checkpoint['epoch']
             args['best_pred'] = checkpoint['best_prec1']
         else:
             print("=> no checkpoint found at '{}'".format(args['pre']))
 
+    model.eval()
+    
+    model.aux_loss = False
+    
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
 
     cap = cv2.VideoCapture(args['video_path'])
-
+    
     '''out video'''
     width = 1024
     height = 768
-    out = cv2.VideoWriter('./out_video.avi', fourcc, 30, (width*2, height*2))
+    
+    out = cv2.VideoWriter('out_video.avi', fourcc, 30, (width*2, height*2))
+    model.half()
 
     while True:
         try:
@@ -80,10 +134,15 @@ def main(args):
 
 
         with torch.no_grad():
-            image = image.cuda()
-            outputs = model(image)
+            image = image.cuda().half()
+            
+            t1 = datetime.now().timestamp()*1000
+            out_logits, out_point = model(image) #model(image)
+            t2 = datetime.now().timestamp()*1000
+            
+            dt = t2 - t1
 
-            out_logits, out_point = outputs['pred_logits'], outputs['pred_points']
+            #out_logits, out_point = outputs['pred_logits'], outputs['pred_points']
 
             prob = out_logits.sigmoid()
             topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), args['num_queries'], dim=1)

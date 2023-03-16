@@ -1,0 +1,31 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "video_demo",
+            "type": "python",
+            "request": "launch",
+            "program": "video_demo.py",
+            "justMyCode": false,
+            "args": [
+                "--video_path", "/workspaces/CLTR-agentvi/20230219_124229.mp4",
+                "--num_queries", "700",
+                "--pre", "video_model.pth"
+            ]
+        },
+        {
+            "name": "save_to_torchscript",
+            "type": "python",
+            "request": "launch",
+            "program": "save_to_torchscript.py",
+            "justMyCode": false,
+            "args": [
+                "--num_queries", "700",
+                "--pre", "video_model.pth"
+            ]
+        }
+    ]
+}

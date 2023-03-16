@@ -144,23 +144,25 @@ class MultiheadAttention(Module):
         if not self._qkv_same_embed_dim:
             return multi_head_attention_forward(
                 query, key, value, self.embed_dim, self.num_heads,
-                self.in_proj_weight, self.in_proj_bias,
                 self.bias_k, self.bias_v, self.add_zero_attn,
                 self.dropout, self.out_proj.weight, self.out_proj.bias,
                 training=self.training,
+                in_proj_weight=self.in_proj_weight,
+                in_proj_bias=self.in_proj_bias,
                 key_padding_mask=key_padding_mask, need_weights=need_weights,
                 attn_mask=attn_mask, use_separate_proj_weight=True,
                 q_proj_weight=self.q_proj_weight, k_proj_weight=self.k_proj_weight,
-                v_proj_weight=self.v_proj_weight, out_dim=self.vdim)
+                v_proj_weight=self.v_proj_weight, out_dim=torch.tensor(self.vdim))
         else:
             return multi_head_attention_forward(
                 query, key, value, self.embed_dim, self.num_heads,
-                self.in_proj_weight, self.in_proj_bias,
                 self.bias_k, self.bias_v, self.add_zero_attn,
                 self.dropout, self.out_proj.weight, self.out_proj.bias,
+                in_proj_weight=self.in_proj_weight,
+                in_proj_bias=self.in_proj_bias,
                 training=self.training,
                 key_padding_mask=key_padding_mask, need_weights=need_weights,
-                attn_mask=attn_mask, out_dim=self.vdim)
+                attn_mask=attn_mask, out_dim=torch.tensor(self.vdim))
 
 
 def multi_head_attention_forward(query: Tensor,
@@ -168,15 +170,16 @@ def multi_head_attention_forward(query: Tensor,
                                  value: Tensor,
                                  embed_dim_to_check: int,
                                  num_heads: int,
-                                 in_proj_weight: Tensor,
-                                 in_proj_bias: Tensor,
                                  bias_k: Optional[Tensor],
                                  bias_v: Optional[Tensor],
                                  add_zero_attn: bool,
                                  dropout_p: float,
                                  out_proj_weight: Tensor,
                                  out_proj_bias: Tensor,
+                                 out_dim: Tensor,
                                  training: bool = True,
+                                 in_proj_weight: Optional[Tensor] = None,
+                                 in_proj_bias: Optional[Tensor] = None,
                                  key_padding_mask: Optional[Tensor] = None,
                                  need_weights: bool = True,
                                  attn_mask: Optional[Tensor] = None,
@@ -185,8 +188,7 @@ def multi_head_attention_forward(query: Tensor,
                                  k_proj_weight: Optional[Tensor] = None,
                                  v_proj_weight: Optional[Tensor] = None,
                                  static_k: Optional[Tensor] = None,
-                                 static_v: Optional[Tensor] = None,
-                                 out_dim: Optional[Tensor] = None
+                                 static_v: Optional[Tensor] = None
                                  ) -> Tuple[Tensor, Optional[Tensor]]:
     r"""
     Args:
@@ -361,7 +363,7 @@ def multi_head_attention_forward(query: Tensor,
     attn_output_weights = dropout(attn_output_weights, p=dropout_p, training=training)
 
     attn_output = torch.bmm(attn_output_weights, v)
-    assert list(attn_output.size()) == [bsz * num_heads, tgt_len, v_head_dim]
+    #assert list(attn_output.size()) == [bsz * num_heads, tgt_len, v_head_dim]
     attn_output = attn_output.transpose(0, 1).contiguous().view(tgt_len, bsz, out_dim)
     attn_output = linear(attn_output, out_proj_weight, out_proj_bias)
 
